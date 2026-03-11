@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+logs/
+temp/
+config.json
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+Lib/
+Scripts/
+Include/
+pyvenv.cfg
+install.cmd
+share/
