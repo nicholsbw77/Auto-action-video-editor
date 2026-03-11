@@ -1,0 +1,1 @@
+"""Auto Video Editor - Entry Point."""
