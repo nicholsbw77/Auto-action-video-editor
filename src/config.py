@@ -22,7 +22,8 @@ DEFAULTS = {
 class AppConfig:
     def __init__(self, path: Path | str | None = None):
         if path is None:
-            path = Path(__file__).parent / "config.json"
+            from paths import get_app_dir
+            path = get_app_dir() / "config.json"
         self._path = Path(path)
         self._data: dict = {}
         self._load()

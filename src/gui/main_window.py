@@ -1,10 +1,10 @@
 import logging
-from pathlib import Path
 from PyQt6.QtWidgets import (
     QMainWindow, QTabWidget, QMenuBar, QMenu, QStatusBar,
     QMessageBox, QFileDialog,
 )
 from PyQt6.QtGui import QAction
+from paths import get_app_dir
 from gui.auto_edit_tab import AutoEditTab
 from gui.trim_tab import TrimTab
 from config import AppConfig
@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._tabs)
 
         # Inject dependencies
-        app_dir = Path(__file__).parent.parent
+        app_dir = get_app_dir()
         runner = FFmpegRunner(self._config.ffmpeg_path or "ffmpeg", self._config.ffprobe_path or "ffprobe")
         filter_builder = FilterGraphBuilder()
         gpu_det = GPUDetector(self._config.ffmpeg_path or "ffmpeg")

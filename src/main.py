@@ -1,9 +1,9 @@
 import sys
 import logging
-from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
+from paths import get_app_dir
 from config import AppConfig
 from core.logger import setup_logging
 from core.temp_manager import TempManager
@@ -13,7 +13,7 @@ from gui.main_window import MainWindow
 
 
 def main():
-    app_dir = Path(__file__).parent
+    app_dir = get_app_dir()
     log_dir = app_dir / "logs"
     temp_dir = app_dir / "temp"
 
