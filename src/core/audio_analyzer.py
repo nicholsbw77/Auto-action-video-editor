@@ -126,14 +126,20 @@ class AudioAnalyzer:
 
     def classify_beat_strength(
         self, beat_times: np.ndarray, onset_env: np.ndarray,
+        duration: float | None = None,
     ) -> list[str]:
         if len(beat_times) == 0:
             return []
-        # Sample onset strength at each beat position
+        # Use duration if provided, otherwise estimate from last beat
+        dur = duration if duration else float(beat_times[-1])
+        if dur <= 0:
+            return ["weak"] * len(beat_times)
+        # Map beat times to onset_env frame indices
+        # Uses same formula as CutGenerator._classify_beat_strength
         indices = np.clip(
-            (beat_times * len(onset_env) / beat_times[-1]).astype(int),
+            (beat_times / dur * len(onset_env)).astype(int),
             0, len(onset_env) - 1,
-        ) if beat_times[-1] > 0 else np.zeros(len(beat_times), dtype=int)
+        )
         strengths_at_beats = onset_env[indices]
         median_strength = np.median(strengths_at_beats)
         return [

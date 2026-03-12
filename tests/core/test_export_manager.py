@@ -91,3 +91,47 @@ class TestExportManager:
         em = ExportManager()
         stream = {"r_frame_rate": "30/1", "avg_frame_rate": "29.97/1"}
         assert em.is_vfr(stream) is False
+
+    def test_empty_probe_uses_defaults(self):
+        """Critical #5: empty probes should use safe defaults, not 0x0"""
+        em = ExportManager()
+        settings = em.resolve_settings(
+            probe_data=[], output_path="out.mp4",
+            video_codec="libx264", video_crf=18,
+        )
+        assert settings.width > 0
+        assert settings.height > 0
+        assert settings.fps > 0.0
+
+    def test_no_video_streams_uses_defaults(self):
+        """Critical #5: probes with only audio should use safe defaults"""
+        probe_data = {
+            "streams": [{"codec_type": "audio"}],
+            "format": {"duration": "60.0"},
+        }
+        em = ExportManager()
+        settings = em.resolve_settings(
+            probe_data=[probe_data], output_path="out.mp4",
+            video_codec="libx264", video_crf=18,
+        )
+        assert settings.width > 0
+        assert settings.height > 0
+
+    def test_odd_dimensions_rounded_to_even(self):
+        """Critical #6: odd dimensions must be rounded to even for codec compatibility"""
+        probe_data = {
+            "streams": [
+                {"codec_type": "video", "width": 1279, "height": 719,
+                 "r_frame_rate": "30/1", "avg_frame_rate": "30/1"},
+            ],
+            "format": {"duration": "60.0"},
+        }
+        em = ExportManager()
+        settings = em.resolve_settings(
+            probe_data=[probe_data], output_path="out.mp4",
+            video_codec="libx264", video_crf=18,
+        )
+        assert settings.width % 2 == 0
+        assert settings.height % 2 == 0
+        assert settings.width == 1278
+        assert settings.height == 718

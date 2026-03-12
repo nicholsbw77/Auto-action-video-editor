@@ -33,15 +33,23 @@ class ExportManager:
                     max_h = max(max_h, h)
                     max_fps = max(max_fps, fps)
 
+        # Validate: if no video streams found, use safe defaults
+        if max_w == 0 or max_h == 0 or max_fps == 0.0:
+            logger.warning("No valid video streams found in probes, using 1920x1080@30fps defaults")
+            max_w = max_w or 1920
+            max_h = max_h or 1080
+            max_fps = max_fps or 30.0
+
         # Cap at 1080p60
         if max_w > MAX_WIDTH or max_h > MAX_HEIGHT:
             scale = min(MAX_WIDTH / max_w, MAX_HEIGHT / max_h)
             max_w = int(max_w * scale)
             max_h = int(max_h * scale)
-            # Ensure even dimensions
-            max_w = max_w - (max_w % 2)
-            max_h = max_h - (max_h % 2)
         max_fps = min(max_fps, MAX_FPS)
+
+        # Ensure even dimensions (required by libx264 and h264_nvenc)
+        max_w = max_w - (max_w % 2)
+        max_h = max_h - (max_h % 2)
 
         return ExportSettings(
             output_path=output_path,

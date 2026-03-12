@@ -48,6 +48,7 @@ class TrimTab(QWidget):
         self._video_duration: float = 0.0
         self._region_widgets: list[TrimRegionWidget] = []
         self._runner = None
+        self._trim_worker = None
         self._init_ui()
 
     def _init_ui(self):
@@ -204,51 +205,30 @@ class TrimTab(QWidget):
         self._progress.setValue(0)
 
         session_dir = self._temp_manager.create_session()
-        segment_files = []
 
-        for i, region in enumerate(regions):
-            out_name = f"{source_name}_trim_{i + 1}.mp4"
-            out_path = os.path.join(output_dir if not is_concat else str(session_dir), out_name)
+        from gui.workers import TrimWorker
+        self._trim_worker = TrimWorker(
+            video_path=self._video_path,
+            regions=regions,
+            output_dir=output_dir,
+            is_concat=is_concat,
+            reencode=reencode,
+            source_name=source_name,
+            runner=self._runner,
+            session_dir=str(session_dir),
+        )
+        self._trim_worker.progress.connect(self._progress.setValue)
+        self._trim_worker.finished.connect(self._on_trim_done)
+        self._trim_worker.error.connect(self._on_trim_error)
+        self._trim_worker.start()
 
-            if reencode:
-                extra = ["-c:v", "libx264", "-crf", "18", "-preset", "medium",
-                         "-c:a", "aac", "-b:a", "192k"]
-            else:
-                extra = ["-c", "copy"]
-
-            cmd = self._runner.build_command(
-                inputs=[self._video_path], output=out_path,
-                extra_args=["-ss", str(region.start), "-to", str(region.end)] + extra,
-            )
-            result = self._runner.run(cmd)
-            if result.returncode != 0:
-                QMessageBox.critical(self, "Error", f"Failed to export {region.label}")
-                self._export_btn.setEnabled(True)
-                return
-
-            segment_files.append(out_path)
-            self._progress.setValue(int((i + 1) / len(regions) * (100 if not is_concat else 80)))
-
-        if is_concat and len(segment_files) > 1:
-            concat_file = os.path.join(str(session_dir), "concat.txt")
-            with open(concat_file, "w") as f:
-                for sf in segment_files:
-                    f.write(f"file '{sf}'\n")
-
-            final_output = os.path.join(output_dir, f"{source_name}_trimmed.mp4")
-            cmd = self._runner.build_command(
-                inputs=[], output=final_output,
-                extra_args=["-f", "concat", "-safe", "0", "-i", concat_file,
-                            "-c:v", "libx264", "-crf", "18",
-                            "-c:a", "aac", "-b:a", "192k"],
-            )
-            result = self._runner.run(cmd)
-            if result.returncode != 0:
-                QMessageBox.critical(self, "Error", "Failed to concatenate regions")
-                self._export_btn.setEnabled(True)
-                return
-
-        self._progress.setValue(100)
+    def _on_trim_done(self, success: bool):
         self._temp_manager.cleanup_session()
         self._export_btn.setEnabled(True)
-        QMessageBox.information(self, "Done", "Trim export complete!")
+        if success:
+            QMessageBox.information(self, "Done", "Trim export complete!")
+
+    def _on_trim_error(self, message: str):
+        self._temp_manager.cleanup_session()
+        self._export_btn.setEnabled(True)
+        QMessageBox.critical(self, "Error", message)

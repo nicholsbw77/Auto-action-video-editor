@@ -21,3 +21,18 @@ class TestTimecode:
     def test_roundtrip(self):
         for val in [0.0, 1.5, 90.5, 3600.0, 7261.99]:
             assert abs(parse_timecode(format_timecode(val)) - val) < 0.01
+
+    def test_format_timecode_centisecond_overflow(self):
+        """Regression: 59.999 should become 01:00:00.00, not 00:00:59.100"""
+        result = format_timecode(59.999)
+        assert result == "00:01:00.00"
+
+    def test_format_timecode_boundary(self):
+        """Test edge case at exact minute boundary"""
+        result = format_timecode(59.995)
+        assert result == "00:01:00.00"
+
+    def test_format_timecode_sub_overflow(self):
+        """Test that 3599.999 rolls over to 01:00:00.00"""
+        result = format_timecode(3599.999)
+        assert result == "01:00:00.00"

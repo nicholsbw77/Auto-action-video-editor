@@ -216,36 +216,34 @@ class AutoEditTab(QWidget):
         use_own_audio = self._use_video_audio.isChecked()
 
         if use_own_audio:
-            audio_path = self._extract_audio(paths[0])
+            # Extract audio on background thread
+            self.log("Extracting audio from video...")
+            audio_out = str(self._temp_manager.session_dir / "extracted_audio.wav")
+            from gui.workers import AudioExtractWorker
+            self._extract_worker = AudioExtractWorker(paths[0], audio_out, self._runner)
+            self._extract_worker.finished.connect(
+                lambda audio_path: self._start_analysis(audio_path, paths, False)
+            )
+            self._extract_worker.error.connect(self._on_error)
+            self._extract_worker.start()
         else:
             audio_path = self._audio_path
+            if not audio_path:
+                self.log("Error: No audio source available")
+                self._go_btn.setEnabled(True)
+                self._cancel_btn.setEnabled(False)
+                return
+            self._start_analysis(audio_path, paths, True)
 
-        if not audio_path:
-            self.log("Error: No audio source available")
-            self._go_btn.setEnabled(True)
-            self._cancel_btn.setEnabled(False)
-            return
-
+    def _start_analysis(self, audio_path: str, paths: list[str], use_separate_audio: bool):
         from gui.workers import AnalysisWorker
         self._analysis_worker = AnalysisWorker(audio_path)
         self._analysis_worker.progress.connect(self.log)
         self._analysis_worker.finished.connect(
-            lambda result: self._on_analysis_done(result, paths, audio_path, not use_own_audio)
+            lambda result: self._on_analysis_done(result, paths, audio_path, use_separate_audio)
         )
         self._analysis_worker.error.connect(self._on_error)
         self._analysis_worker.start()
-
-    def _extract_audio(self, video_path: str) -> str | None:
-        audio_out = str(self._temp_manager.session_dir / "extracted_audio.wav")
-        cmd = self._runner.build_command(
-            inputs=[video_path], output=audio_out,
-            extra_args=["-vn", "-ac", "1", "-ar", "22050"],
-        )
-        result = self._runner.run(cmd)
-        if result.returncode != 0:
-            self.log(f"Audio extraction failed: {result.stderr[-200:]}")
-            return None
-        return audio_out
 
     def _on_analysis_done(self, result, paths, audio_path, use_separate_audio):
         if result is None:
@@ -310,6 +308,7 @@ class AutoEditTab(QWidget):
     def _on_error(self, message: str):
         self.log(f"Error: {message}")
         QMessageBox.critical(self, "Error", message)
+        self._temp_manager.cleanup_session()
         self._reset_ui()
 
     def _cancel_pipeline(self):

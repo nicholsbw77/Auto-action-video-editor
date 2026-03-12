@@ -1,4 +1,6 @@
 import logging
+import os
+import shutil
 from pathlib import Path
 
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -131,10 +133,11 @@ class ExportWorker(QThread):
                     )
 
                     total_dur = sum(c.end - c.start for c in batch)
+                    group_index = gi  # capture for lambda closure
                     result = self._runner.run(
                         cmd, total_duration=total_dur,
-                        progress_callback=lambda p: self.progress.emit(
-                            (gi + p) / total_groups
+                        progress_callback=lambda p, g=group_index: self.progress.emit(
+                            (g + p) / total_groups
                         ),
                         cancel_check=lambda: self._cancelled,
                     )
@@ -156,18 +159,15 @@ class ExportWorker(QThread):
                             result = self._runner.run(cmd, total_duration=total_dur)
                             if result.returncode != 0:
                                 self.error.emit(f"Encoding failed: {result.stderr[-300:]}")
-                                self.finished.emit(False)
                                 return
                         else:
                             self.error.emit(f"Encoding failed: {result.stderr[-300:]}")
-                            self.finished.emit(False)
                             return
 
                     intermediate_files.append(out_path)
 
             # Concatenate intermediates if needed
             if len(intermediate_files) == 1:
-                import shutil
                 shutil.move(intermediate_files[0], self._settings.output_path)
             else:
                 self.stage.emit("Concatenating segments...")
@@ -180,16 +180,12 @@ class ExportWorker(QThread):
                     output=self._settings.output_path,
                     extra_args=[
                         "-f", "concat", "-safe", "0", "-i", concat_file,
-                        "-c:v", self._settings.video_codec,
-                        "-crf" if self._settings.video_codec == "libx264" else "-cq",
-                        str(self._settings.video_crf),
-                        "-c:a", "aac", "-b:a", "192k",
+                        "-c", "copy",
                     ],
                 )
                 result = self._runner.run(cmd)
                 if result.returncode != 0:
                     self.error.emit(f"Concat failed: {result.stderr[-300:]}")
-                    self.finished.emit(False)
                     return
 
             # Add separate audio if needed
@@ -197,7 +193,6 @@ class ExportWorker(QThread):
                 self.stage.emit("Adding audio track...")
                 final_with_audio = self._settings.output_path
                 temp_video = str(Path(self._temp_dir) / "video_only.mp4")
-                import shutil
                 shutil.move(final_with_audio, temp_video)
 
                 cmd = self._runner.build_command(
@@ -213,7 +208,6 @@ class ExportWorker(QThread):
                 result = self._runner.run(cmd)
                 if result.returncode != 0:
                     self.error.emit(f"Audio mux failed: {result.stderr[-300:]}")
-                    self.finished.emit(False)
                     return
 
             self.stage.emit("Export complete!")
@@ -222,4 +216,124 @@ class ExportWorker(QThread):
         except Exception as e:
             logger.exception("Export failed")
             self.error.emit(str(e))
-            self.finished.emit(False)
+
+
+class AudioExtractWorker(QThread):
+    """Extract audio from video on a background thread (Critical #2 fix)."""
+    finished = pyqtSignal(str)  # extracted audio path
+    error = pyqtSignal(str)
+
+    def __init__(self, video_path: str, output_path: str, runner: FFmpegRunner, parent=None):
+        super().__init__(parent)
+        self._video_path = video_path
+        self._output_path = output_path
+        self._runner = runner
+
+    def run(self):
+        try:
+            cmd = self._runner.build_command(
+                inputs=[self._video_path], output=self._output_path,
+                extra_args=["-vn", "-ac", "1", "-ar", "22050"],
+            )
+            result = self._runner.run(cmd)
+            if result.returncode != 0:
+                self.error.emit(f"Audio extraction failed: {result.stderr[-200:]}")
+                return
+            self.finished.emit(self._output_path)
+        except Exception as e:
+            logger.exception("Audio extraction failed")
+            self.error.emit(str(e))
+
+
+class TrimWorker(QThread):
+    """Run trim export on a background thread (Critical #1 fix)."""
+    progress = pyqtSignal(int)  # 0-100
+    finished = pyqtSignal(bool)  # success
+    error = pyqtSignal(str)
+
+    def __init__(
+        self,
+        video_path: str,
+        regions: list,
+        output_dir: str,
+        is_concat: bool,
+        reencode: bool,
+        source_name: str,
+        runner: FFmpegRunner,
+        session_dir: str,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self._video_path = video_path
+        self._regions = regions
+        self._output_dir = output_dir
+        self._is_concat = is_concat
+        self._reencode = reencode
+        self._source_name = source_name
+        self._runner = runner
+        self._session_dir = session_dir
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            segment_files = []
+            for i, region in enumerate(self._regions):
+                if self._cancelled:
+                    self.finished.emit(False)
+                    return
+
+                out_name = f"{self._source_name}_trim_{i + 1}.mp4"
+                if self._is_concat:
+                    out_path = os.path.join(self._session_dir, out_name)
+                else:
+                    out_path = os.path.join(self._output_dir, out_name)
+
+                if self._reencode:
+                    extra = ["-c:v", "libx264", "-crf", "18", "-preset", "medium",
+                             "-c:a", "aac", "-b:a", "192k"]
+                else:
+                    extra = ["-c", "copy"]
+
+                cmd = self._runner.build_command(
+                    inputs=[self._video_path], output=out_path,
+                    extra_args=["-ss", str(region.start), "-to", str(region.end)] + extra,
+                )
+                result = self._runner.run(cmd)
+                if result.returncode != 0:
+                    self.error.emit(f"Failed to export {region.label}")
+                    return
+
+                segment_files.append(out_path)
+                self.progress.emit(int((i + 1) / len(self._regions) * (100 if not self._is_concat else 80)))
+
+            if self._is_concat and len(segment_files) > 1:
+                concat_file = os.path.join(self._session_dir, "concat.txt")
+                with open(concat_file, "w") as f:
+                    for sf in segment_files:
+                        f.write(f"file '{sf}'\n")
+
+                final_output = os.path.join(self._output_dir, f"{self._source_name}_trimmed.mp4")
+                cmd = self._runner.build_command(
+                    inputs=[], output=final_output,
+                    extra_args=["-f", "concat", "-safe", "0", "-i", concat_file,
+                                "-c:v", "libx264", "-crf", "18",
+                                "-c:a", "aac", "-b:a", "192k"],
+                )
+                result = self._runner.run(cmd)
+                if result.returncode != 0:
+                    self.error.emit("Failed to concatenate regions")
+                    return
+            elif self._is_concat and len(segment_files) == 1:
+                # Single region in concat mode: move from temp to output
+                final_output = os.path.join(self._output_dir, f"{self._source_name}_trimmed.mp4")
+                shutil.move(segment_files[0], final_output)
+
+            self.progress.emit(100)
+            self.finished.emit(True)
+
+        except Exception as e:
+            logger.exception("Trim export failed")
+            self.error.emit(str(e))

@@ -53,3 +53,7 @@ class GPUDetector:
     @property
     def nvenc_available(self) -> bool:
         return self._nvenc_available
+
+    @nvenc_available.setter
+    def nvenc_available(self, value: bool):
+        self._nvenc_available = value

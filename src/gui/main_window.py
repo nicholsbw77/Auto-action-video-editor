@@ -75,7 +75,7 @@ class MainWindow(QMainWindow):
         filter_builder = FilterGraphBuilder()
         gpu_det = GPUDetector(self._config.ffmpeg_path or "ffmpeg")
         if self._config.gpu_detected and not self._config.force_cpu:
-            gpu_det._nvenc_available = self._config.gpu_detected
+            gpu_det.nvenc_available = self._config.gpu_detected
         temp_mgr = TempManager(app_dir / "temp")
 
         self._auto_edit_tab.set_dependencies(self._config, runner, filter_builder, gpu_det, temp_mgr)

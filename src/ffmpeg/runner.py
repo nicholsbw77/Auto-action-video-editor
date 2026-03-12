@@ -67,13 +67,27 @@ class FFmpegRunner:
                     if t is not None:
                         progress_callback(min(t / total_duration, 1.0))
                 if cancel_check and cancel_check():
-                    process.stdin.write("q\n")
-                    process.stdin.flush()
-                    process.wait(timeout=10)
+                    try:
+                        process.stdin.write("q\n")
+                        process.stdin.flush()
+                    except (BrokenPipeError, OSError):
+                        process.kill()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                     raise RuntimeError("FFmpeg cancelled by user")
         except BrokenPipeError:
             pass
-        process.wait()
+        except RuntimeError:
+            raise  # Re-raise cancellation
+        try:
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            logger.warning("FFmpeg did not exit in 60s, killing process")
+            process.kill()
+            process.wait(timeout=5)
         stderr_text = "".join(stderr_lines)
         if process.returncode != 0:
             logger.error("FFmpeg failed (rc=%d): %s", process.returncode, stderr_text[-500:])

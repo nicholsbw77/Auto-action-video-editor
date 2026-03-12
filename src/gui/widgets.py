@@ -17,12 +17,14 @@ def parse_timecode(tc: str) -> float:
 
 
 def format_timecode(seconds: float) -> str:
-    h = int(seconds // 3600)
-    seconds %= 3600
-    m = int(seconds // 60)
-    seconds %= 60
-    s = int(seconds)
-    cs = int(round((seconds - s) * 100))
+    # Round to nearest centisecond first, then decompose to avoid overflow
+    total_cs = int(round(seconds * 100))
+    cs = total_cs % 100
+    total_s = total_cs // 100
+    s = total_s % 60
+    total_m = total_s // 60
+    m = total_m % 60
+    h = total_m // 60
     return f"{h:02d}:{m:02d}:{s:02d}.{cs:02d}"
 
 
