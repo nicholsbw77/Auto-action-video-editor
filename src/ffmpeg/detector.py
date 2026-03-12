@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from ffmpeg import _subprocess_flags
+
 logger = logging.getLogger("autoeditor.ffmpeg")
 
 COMMON_PATHS_WIN = [
@@ -26,16 +28,29 @@ class FFmpegDetector:
         return self._find_binary("ffprobe")
 
     def _find_binary(self, name: str) -> str | None:
+        # Check bundled tools directory first
+        from paths import get_app_dir
+        app_tools = get_app_dir() / "tools"
+        for ext in ("", ".exe"):
+            candidate = app_tools / f"{name}{ext}"
+            if candidate.is_file():
+                logger.info("Found bundled %s at: %s", name, candidate)
+                return str(candidate)
+
+        # Then check system PATH
         result = shutil.which(name)
         if result:
             logger.info("Found %s on PATH: %s", name, result)
             return result
+
+        # Then check common Windows locations
         for search_path in self._extra_paths:
             for ext in ("", ".exe"):
                 candidate = Path(search_path) / f"{name}{ext}"
                 if candidate.is_file():
                     logger.info("Found %s at: %s", name, candidate)
                     return str(candidate)
+
         logger.warning("%s not found", name)
         return None
 
@@ -44,6 +59,7 @@ class FFmpegDetector:
             result = subprocess.run(
                 [ffmpeg_path, "-version"],
                 capture_output=True, text=True, timeout=10,
+                **_subprocess_flags(),
             )
             match = re.search(r"ffmpeg version (\d+)\.(\d+)\.?(\d*)", result.stdout)
             if not match:

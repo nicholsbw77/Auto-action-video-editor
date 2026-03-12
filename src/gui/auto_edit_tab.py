@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFileDialog, QCheckBox, QRadioButton, QButtonGroup,
     QProgressBar, QTextEdit, QLineEdit, QGroupBox, QMessageBox,
+    QSlider,
 )
 from PyQt6.QtCore import Qt
 from gui.widgets import FileListWidget
@@ -72,6 +73,47 @@ class AutoEditTab(QWidget):
 
         layout.addWidget(input_group)
 
+        # Edit settings section
+        edit_group = QGroupBox("Edit Settings")
+        edit_layout = QVBoxLayout(edit_group)
+
+        # Aggressiveness slider
+        aggr_layout = QHBoxLayout()
+        aggr_layout.addWidget(QLabel("Cut Aggressiveness:"))
+        self._aggr_slider = QSlider(Qt.Orientation.Horizontal)
+        self._aggr_slider.setRange(1, 10)
+        self._aggr_slider.setValue(5)
+        self._aggr_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self._aggr_slider.setTickInterval(1)
+        self._aggr_label = QLabel("5 - Moderate")
+        self._aggr_label.setMinimumWidth(100)
+        self._aggr_slider.valueChanged.connect(self._on_aggr_changed)
+        aggr_layout.addWidget(self._aggr_slider)
+        aggr_layout.addWidget(self._aggr_label)
+        edit_layout.addLayout(aggr_layout)
+
+        # Transition type selection
+        trans_layout = QHBoxLayout()
+        trans_layout.addWidget(QLabel("Transitions:"))
+        self._transition_checks: dict[str, QCheckBox] = {}
+        transition_labels = {
+            "hard_cut": "Hard Cut",
+            "crossfade": "Crossfade",
+            "crossfade_slow": "Slow Fade",
+            "fade_black": "Fade Black",
+            "wipe_left": "Wipe Left",
+            "wipe_right": "Wipe Right",
+        }
+        for t_type, label in transition_labels.items():
+            cb = QCheckBox(label)
+            cb.setChecked(True)
+            self._transition_checks[t_type] = cb
+            trans_layout.addWidget(cb)
+        trans_layout.addStretch()
+        edit_layout.addLayout(trans_layout)
+
+        layout.addWidget(edit_group)
+
         # Export settings
         export_group = QGroupBox("Export")
         export_layout = QVBoxLayout(export_group)
@@ -131,6 +173,10 @@ class AutoEditTab(QWidget):
         self._filter_builder = filter_builder
         self._gpu_detector = gpu_detector
         self._temp_manager = temp_manager
+        # Load saved settings
+        self._aggr_slider.setValue(config.aggressiveness)
+        for t_type, cb in self._transition_checks.items():
+            cb.setChecked(t_type in config.allowed_transitions)
 
     def _add_videos(self):
         files, _ = QFileDialog.getOpenFileNames(
@@ -159,6 +205,22 @@ class AutoEditTab(QWidget):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
         if folder:
             self._output_folder.setText(folder)
+
+    _AGGR_LABELS = {
+        1: "Gentle", 2: "Relaxed", 3: "Calm", 4: "Easy",
+        5: "Moderate", 6: "Active", 7: "Energetic", 8: "Fast",
+        9: "Intense", 10: "Maximum",
+    }
+
+    def _on_aggr_changed(self, value: int):
+        label = self._AGGR_LABELS.get(value, "")
+        self._aggr_label.setText(f"{value} - {label}")
+
+    def _get_allowed_transitions(self) -> list[str]:
+        allowed = [t for t, cb in self._transition_checks.items() if cb.isChecked()]
+        if not allowed:
+            allowed = ["hard_cut"]
+        return allowed
 
     def _on_mode_changed(self):
         is_multi = self._multi_radio.isChecked()
@@ -204,6 +266,11 @@ class AutoEditTab(QWidget):
         self._go_btn.setEnabled(False)
         self._cancel_btn.setEnabled(True)
         self._progress.setValue(0)
+
+        # Save current edit settings
+        self._config.aggressiveness = self._aggr_slider.value()
+        self._config.allowed_transitions = self._get_allowed_transitions()
+        self._config.save()
 
         # Always create a temp session
         self._temp_manager.create_session()
@@ -255,9 +322,9 @@ class AutoEditTab(QWidget):
 
         from core.cut_generator import CutGenerator
         gen = CutGenerator(
-            min_cut=self._config.min_cut_duration,
-            max_cut=self._config.max_cut_duration,
+            aggressiveness=self._aggr_slider.value(),
             beat_snap_ms=self._config.beat_snap_tolerance_ms,
+            allowed_transitions=self._get_allowed_transitions(),
         )
         cuts = gen.generate(result, num_sources=len(paths))
         self.log(f"Generated {len(cuts)} cut points")

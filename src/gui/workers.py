@@ -76,10 +76,65 @@ class ExportWorker(QThread):
     def cancel(self):
         self._cancelled = True
 
+    def _remap_cuts_for_multi_clip(self, cuts: list[CutPoint]) -> list[CutPoint]:
+        """Remap audio-timeline timestamps to source-local timestamps.
+
+        In multi-clip mode, each source video is consumed sequentially from
+        its beginning. When a source runs out of content, its playhead loops
+        back to the start.
+        """
+        source_durations: dict[int, float] = {}
+        for i, path in enumerate(self._source_paths):
+            try:
+                probe = self._runner.probe(path)
+                dur = float(probe.get("format", {}).get("duration", 0))
+                source_durations[i] = dur if dur > 0 else float("inf")
+            except Exception:
+                source_durations[i] = float("inf")
+
+        playheads: dict[int, float] = {}
+        remapped = []
+        for cut in cuts:
+            src = cut.source_index
+            seg_dur = cut.end - cut.start
+            src_dur = source_durations.get(src, float("inf"))
+
+            if src not in playheads:
+                playheads[src] = 0.0
+
+            # If this segment won't fit, loop back to beginning
+            if src_dur < float("inf") and playheads[src] + seg_dur > src_dur:
+                playheads[src] = 0.0
+
+            src_start = playheads[src]
+            src_end = src_start + seg_dur
+
+            # Safety clamp to source duration
+            if src_dur < float("inf") and src_end > src_dur:
+                src_end = src_dur
+
+            remapped.append(CutPoint(
+                start=round(src_start, 6),
+                end=round(src_end, 6),
+                source_index=cut.source_index,
+                transition_type=cut.transition_type,
+                transition_duration=cut.transition_duration,
+            ))
+            playheads[src] = src_end
+
+        return remapped
+
     def run(self):
         try:
+            # For multi-clip, remap audio timestamps to source-local timestamps
+            cuts = self._cuts
+            is_multi_clip = len(self._source_paths) > 1
+            if is_multi_clip:
+                self.stage.emit("Preparing multi-clip sources...")
+                cuts = self._remap_cuts_for_multi_clip(cuts)
+
             self.stage.emit("Grouping segments...")
-            groups = self._filter_builder.group_cuts(self._cuts)
+            groups = self._filter_builder.group_cuts(cuts)
             intermediate_files = []
 
             total_groups = len(groups)
@@ -97,7 +152,12 @@ class ExportWorker(QThread):
                         return
 
                     source_mapping = self._filter_builder.build_source_mapping(batch)
-                    video_graph = self._filter_builder.build_xfade_graph(batch, source_mapping)
+                    normalize = None
+                    if is_multi_clip:
+                        normalize = (self._settings.width, self._settings.height, self._settings.fps)
+                    video_graph = self._filter_builder.build_xfade_graph(
+                        batch, source_mapping, normalize=normalize,
+                    )
                     audio_graph = self._filter_builder.build_audio_graph(
                         batch, source_mapping, self._use_separate_audio,
                     )
@@ -336,4 +396,21 @@ class TrimWorker(QThread):
 
         except Exception as e:
             logger.exception("Trim export failed")
+            self.error.emit(str(e))
+
+
+class FFmpegDownloadWorker(QThread):
+    """Download FFmpeg binaries on a background thread."""
+    progress = pyqtSignal(float)  # 0.0 to 1.0
+    finished = pyqtSignal(str, str)  # ffmpeg_path, ffprobe_path
+    error = pyqtSignal(str)
+
+    def run(self):
+        try:
+            from ffmpeg.downloader import FFmpegDownloader
+            dl = FFmpegDownloader()
+            ffmpeg, ffprobe = dl.download(progress_callback=self.progress.emit)
+            self.finished.emit(ffmpeg, ffprobe)
+        except Exception as e:
+            logger.exception("FFmpeg download failed")
             self.error.emit(str(e))

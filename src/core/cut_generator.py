@@ -17,12 +17,49 @@ TRANSITION_DURATIONS = {
     "wipe_right": 0.2,
 }
 
+ALL_TRANSITIONS = list(TRANSITION_DURATIONS.keys())
+
+AGGRESSIVENESS_TABLE = {
+    1:  {"min_cut": 6.0, "max_cut": 15.0, "filter": "strong_beats_only"},
+    2:  {"min_cut": 5.0, "max_cut": 12.0, "filter": "strong_beats_only"},
+    3:  {"min_cut": 4.0, "max_cut": 10.0, "filter": "strong_beats_and_onsets"},
+    4:  {"min_cut": 3.0, "max_cut": 10.0, "filter": "strong_beats_and_onsets"},
+    5:  {"min_cut": 2.0, "max_cut": 8.0,  "filter": "all_beats_strong_onsets"},
+    6:  {"min_cut": 1.5, "max_cut": 6.0,  "filter": "all_beats_strong_onsets"},
+    7:  {"min_cut": 1.2, "max_cut": 5.0,  "filter": "all"},
+    8:  {"min_cut": 1.0, "max_cut": 4.0,  "filter": "all"},
+    9:  {"min_cut": 0.7, "max_cut": 3.0,  "filter": "all"},
+    10: {"min_cut": 0.5, "max_cut": 2.0,  "filter": "all"},
+}
+
+TRANSITION_FALLBACKS = {
+    "hard_cut": ["crossfade", "wipe_left", "wipe_right", "fade_black", "crossfade_slow"],
+    "crossfade": ["crossfade_slow", "hard_cut", "fade_black"],
+    "crossfade_slow": ["crossfade", "fade_black", "hard_cut"],
+    "fade_black": ["crossfade_slow", "crossfade", "hard_cut"],
+    "wipe_left": ["wipe_right", "hard_cut", "crossfade"],
+    "wipe_right": ["wipe_left", "hard_cut", "crossfade"],
+}
+
 
 class CutGenerator:
-    def __init__(self, min_cut: float = 0.5, max_cut: float = 8.0, beat_snap_ms: int = 50):
-        self.min_cut = min_cut
-        self.max_cut = max_cut
+    def __init__(
+        self,
+        aggressiveness: int = 5,
+        min_cut: float | None = None,
+        max_cut: float | None = None,
+        beat_snap_ms: int = 50,
+        allowed_transitions: list[str] | None = None,
+    ):
+        self.aggressiveness = max(1, min(10, aggressiveness))
+        table = AGGRESSIVENESS_TABLE[self.aggressiveness]
+        self.min_cut = min_cut if min_cut is not None else table["min_cut"]
+        self.max_cut = max_cut if max_cut is not None else table["max_cut"]
+        self._candidate_filter = table["filter"]
         self.beat_snap_s = beat_snap_ms / 1000.0
+        self.allowed_transitions = set(allowed_transitions or ALL_TRANSITIONS)
+        if not self.allowed_transitions:
+            self.allowed_transitions = {"hard_cut"}
 
     def generate(self, analysis: AnalysisResult, num_sources: int = 1) -> list[CutPoint]:
         duration = analysis.duration
@@ -93,6 +130,7 @@ class CutGenerator:
                 drops, spikes, high_energy_counter, wipe_counter,
             )
             t_type, high_energy_counter, wipe_counter = transition
+            t_type = self._resolve_transition(t_type)
 
             t_dur = TRANSITION_DURATIONS[t_type]
             # Clamp transition to half the shorter adjacent segment
@@ -122,8 +160,22 @@ class CutGenerator:
         return cuts
 
     def _build_candidates(self, analysis: AnalysisResult) -> list[float]:
-        all_times = sorted(set(analysis.beats + analysis.onsets))
-        return [t for t in all_times if 0 < t < analysis.duration]
+        beat_strengths = self._classify_beat_strength(analysis)
+        onset_strengths = self._classify_onset_strength(analysis)
+
+        if self._candidate_filter == "strong_beats_only":
+            candidates = [b for b in analysis.beats if beat_strengths.get(b) == "strong"]
+        elif self._candidate_filter == "strong_beats_and_onsets":
+            strong_beats = [b for b in analysis.beats if beat_strengths.get(b) == "strong"]
+            strong_onsets = [o for o in analysis.onsets if onset_strengths.get(o, "weak") == "strong"]
+            candidates = sorted(set(strong_beats + strong_onsets))
+        elif self._candidate_filter == "all_beats_strong_onsets":
+            strong_onsets = [o for o in analysis.onsets if onset_strengths.get(o, "weak") == "strong"]
+            candidates = sorted(set(analysis.beats + strong_onsets))
+        else:  # "all"
+            candidates = sorted(set(analysis.beats + analysis.onsets))
+
+        return [t for t in candidates if 0 < t < analysis.duration]
 
     def _classify_energy(self, analysis: AnalysisResult) -> dict:
         e = analysis.energy_envelope
@@ -162,6 +214,29 @@ class CutGenerator:
 
     def _detect_spikes(self, analysis: AnalysisResult) -> list[float]:
         return _detect_energy_spikes(analysis.energy_envelope, analysis.energy_times)
+
+    def _classify_onset_strength(self, analysis: AnalysisResult) -> dict[float, str]:
+        if not analysis.onsets or len(analysis.onset_env) == 0:
+            return {}
+        onset_arr = np.array(analysis.onsets)
+        frame_indices = np.clip(
+            (onset_arr / analysis.duration * len(analysis.onset_env)).astype(int),
+            0, len(analysis.onset_env) - 1,
+        )
+        strengths = analysis.onset_env[frame_indices]
+        median_strength = float(np.median(strengths))
+        return {
+            t: "strong" if strengths[i] > median_strength else "weak"
+            for i, t in enumerate(analysis.onsets)
+        }
+
+    def _resolve_transition(self, preferred: str) -> str:
+        if preferred in self.allowed_transitions:
+            return preferred
+        for fallback in TRANSITION_FALLBACKS.get(preferred, []):
+            if fallback in self.allowed_transitions:
+                return fallback
+        return next(iter(self.allowed_transitions))
 
     def _decide_transition(
         self, t: float, energy_levels: dict, analysis: AnalysisResult,

@@ -4,6 +4,8 @@ import re
 import subprocess
 from typing import Callable
 
+from ffmpeg import _subprocess_flags
+
 logger = logging.getLogger("autoeditor.ffmpeg")
 
 TIME_PATTERN = re.compile(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
@@ -57,6 +59,7 @@ class FFmpegRunner:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             text=True,
+            **_subprocess_flags(),
         )
         stderr_lines = []
         try:
@@ -103,7 +106,7 @@ class FFmpegRunner:
             "-show_format", "-show_streams",
             filepath,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30, **_subprocess_flags())
         if result.returncode != 0:
             raise RuntimeError(f"ffprobe failed for {filepath}: {result.stderr[:200]}")
         return json.loads(result.stdout)

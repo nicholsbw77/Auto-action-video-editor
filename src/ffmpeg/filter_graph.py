@@ -59,17 +59,36 @@ class FilterGraphBuilder:
             offsets.append(offset)
         return offsets
 
-    def build_xfade_graph(self, cuts: list[CutPoint], source_mapping: dict[int, int]) -> str:
+    def build_xfade_graph(
+        self, cuts: list[CutPoint], source_mapping: dict[int, int],
+        normalize: tuple[int, int, float] | None = None,
+    ) -> str:
+        """Build xfade filter graph.
+
+        Args:
+            normalize: Optional (width, height, fps) tuple. When provided, each
+                segment is scaled/padded/fps-converted to match. Required for
+                multi-clip assembly where sources may differ in resolution/fps.
+        """
+        norm = ""
+        if normalize:
+            w, h, fps = normalize
+            norm = (
+                f",scale={w}:{h}:force_original_aspect_ratio=decrease"
+                f",pad={w}:{h}:(ow-iw)/2:(oh-ih)/2"
+                f",fps={fps},format=yuv420p"
+            )
+
         if len(cuts) < 2:
             c = cuts[0]
             local_idx = source_mapping[c.source_index]
-            return f"[{local_idx}:v]trim=start={c.start}:end={c.end},setpts=PTS-STARTPTS[vout]"
+            return f"[{local_idx}:v]trim=start={c.start}:end={c.end},setpts=PTS-STARTPTS{norm}[vout]"
 
         lines = []
         # Trim each segment
         for i, c in enumerate(cuts):
             local_idx = source_mapping[c.source_index]
-            lines.append(f"[{local_idx}:v]trim=start={c.start}:end={c.end},setpts=PTS-STARTPTS[v{i}]")
+            lines.append(f"[{local_idx}:v]trim=start={c.start}:end={c.end},setpts=PTS-STARTPTS{norm}[v{i}]")
 
         # Chain xfade transitions
         offsets = self.calculate_offsets(cuts)

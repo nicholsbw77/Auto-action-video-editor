@@ -1,6 +1,8 @@
 import logging
 import subprocess
 
+from ffmpeg import _subprocess_flags
+
 logger = logging.getLogger("autoeditor.ffmpeg")
 
 
@@ -11,7 +13,7 @@ class GPUDetector:
 
     def detect_nvenc(self) -> bool:
         try:
-            result = subprocess.run(["nvidia-smi"], capture_output=True, timeout=10)
+            result = subprocess.run(["nvidia-smi"], capture_output=True, timeout=10, **_subprocess_flags())
             if result.returncode != 0:
                 logger.info("nvidia-smi returned non-zero — no NVIDIA GPU")
                 self._nvenc_available = False
@@ -25,6 +27,7 @@ class GPUDetector:
             result = subprocess.run(
                 [self._ffmpeg_path, "-encoders"],
                 capture_output=True, text=True, timeout=10,
+                **_subprocess_flags(),
             )
             if "h264_nvenc" in result.stdout:
                 self._nvenc_available = True

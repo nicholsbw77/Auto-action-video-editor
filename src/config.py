@@ -16,6 +16,11 @@ DEFAULTS = {
     "beat_snap_tolerance_ms": 50,
     "min_cut_duration": 0.5,
     "max_cut_duration": 8.0,
+    "aggressiveness": 5,
+    "allowed_transitions": [
+        "hard_cut", "crossfade", "crossfade_slow",
+        "fade_black", "wipe_left", "wipe_right",
+    ],
 }
 
 
