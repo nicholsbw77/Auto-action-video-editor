@@ -89,7 +89,6 @@ a = Analysis(
         'matplotlib',
         'tkinter',
         'test',
-        'unittest',
         'pytest',
     ],
     win_no_prefer_redirects=False,
