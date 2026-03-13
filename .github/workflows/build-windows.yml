@@ -1,0 +1,57 @@
+name: Build Windows Executable
+
+on:
+  push:
+    branches: [main, master, 'claude/**']
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tools
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest -Uri 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' -OutFile 'tools\ffmpeg.zip'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead('tools\ffmpeg.zip')
+          foreach ($entry in $zip.Entries) {
+            if ($entry.Name -eq 'ffmpeg.exe' -or $entry.Name -eq 'ffprobe.exe') {
+              $dest = Join-Path 'tools' $entry.Name
+              [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
+            }
+          }
+          $zip.Dispose()
+          Remove-Item 'tools\ffmpeg.zip'
+          tools\ffmpeg.exe -version
+
+      - name: Build with PyInstaller
+        run: pyinstaller autovideoeditor.spec --noconfirm
+
+      - name: Verify build
+        run: |
+          dir dist\AutoVideoEditor\
+          dir dist\AutoVideoEditor\_internal\tools\
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoVideoEditor-Windows-x64
+          path: dist/AutoVideoEditor/
+          compression-level: 6
