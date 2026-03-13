@@ -1,17 +1,32 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller spec file for Auto Video Editor."""
 
+import platform
 from pathlib import Path
 
 block_cipher = None
 
 PROJECT_ROOT = Path(SPECPATH)
 SRC_DIR = PROJECT_ROOT / 'src'
+TOOLS_DIR = PROJECT_ROOT / 'tools'
+
+# Collect FFmpeg binaries from tools/ directory
+ffmpeg_binaries = []
+if platform.system() == 'Windows':
+    _exts = ['.exe']
+else:
+    _exts = ['']
+
+for _name in ('ffmpeg', 'ffprobe'):
+    for _ext in _exts:
+        _path = TOOLS_DIR / f'{_name}{_ext}'
+        if _path.is_file():
+            ffmpeg_binaries.append((str(_path), 'tools'))
 
 a = Analysis(
     [str(SRC_DIR / 'main.py')],
     pathex=[str(SRC_DIR)],
-    binaries=[],
+    binaries=ffmpeg_binaries,
     datas=[],
     hiddenimports=[
         # --- librosa and its dependency chain ---

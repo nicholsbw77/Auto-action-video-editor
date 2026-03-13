@@ -30,12 +30,17 @@ class FFmpegDetector:
     def _find_binary(self, name: str) -> str | None:
         # Check bundled tools directory first
         from paths import get_app_dir
-        app_tools = get_app_dir() / "tools"
-        for ext in ("", ".exe"):
-            candidate = app_tools / f"{name}{ext}"
-            if candidate.is_file():
-                logger.info("Found bundled %s at: %s", name, candidate)
-                return str(candidate)
+        app_dir = get_app_dir()
+        search_dirs = [
+            app_dir / "tools",
+            app_dir / "_internal" / "tools",  # PyInstaller 6.x layout
+        ]
+        for app_tools in search_dirs:
+            for ext in ("", ".exe"):
+                candidate = app_tools / f"{name}{ext}"
+                if candidate.is_file():
+                    logger.info("Found bundled %s at: %s", name, candidate)
+                    return str(candidate)
 
         # Then check system PATH
         result = shutil.which(name)

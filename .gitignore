@@ -13,3 +13,4 @@ Include/
 pyvenv.cfg
 install.cmd
 share/
+tools/
